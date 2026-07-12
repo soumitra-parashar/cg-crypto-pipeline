@@ -1,4 +1,4 @@
-SELECT
+select
     id,
     symbol,
     name,
@@ -16,6 +16,9 @@ SELECT
     ath,
     ath_change_percentage,
     ath_date,
+    atl,
+    atl_change_percentage,
+    atl_date,
     last_updated,
     price_outside_24h_range
 
