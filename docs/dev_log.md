@@ -34,3 +34,61 @@
 
 **Result:** `dbt debug` passes all checks — dbt is fully connected to 
 Databricks via Unity Catalog. Ready to build first staging model.
+
+
+### Staging Model + Tests
+- Created `models/staging/sources.yml` defining `silver.market_data` as 
+  a dbt source.
+- Built `stg_crypto.sql` — thin staging model with explicit column 
+  selection (no `select *`) on top of Silver, following dbt best practice 
+  to avoid silent schema drift.
+- Added `schema.yml` with tests (`unique`+`not_null` on `id`, `not_null` 
+  on `current_price`/`market_cap`), formalizing the manual validation 
+  checks from earlier into automated, re-runnable dbt tests.
+- Removed dbt's auto-generated example models (`my_first_dbt_model`, 
+  `my_second_dbt_model`) and cleaned up the leftover `example:` config 
+  block in `dbt_project.yml`.
+- `dbt run` and `dbt test` both pass clean — 1 model, 4/4 tests passing.
+
+
+### Gold Layer Marts
+- Built `models/marts/` with three analytical models on top of `stg_crypto`:
+  - `top_gainers_losers` — coins ranked by 24h % market cap change, with a 
+    `movement_direction` label (gainer/loser/unchanged)
+  - `market_cap_leaderboard` — ranked view by market cap, including 
+    `pct_supply_circulating` (guarded against divide-by-zero for uncapped 
+    coins using `nullif`)
+  - `ath_atl_summary` — distance from all-time high/low, including 
+    `days_since_ath`/`days_since_atl` via `datediff` (made possible by 
+    casting date fields properly back in the Silver phase)
+- All three materialized as tables (`{{ config(materialized='table') }}`), 
+  since Gold output is meant to be pre-computed for repeated querying, 
+  unlike staging's default view materialization.
+
+**Issue hit:** `ath_atl_summary` failed with an UNRESOLVED_COLUMN error on 
+`atl`. Traced upstream — the actual typo was in `stg_crypto.sql`, which 
+had never selected `atl` correctly, but hadn't surfaced yet since no 
+existing test queried that column. Fixed at the source (staging model), 
+not just the symptom (the mart referencing it).
+
+**Deliberately deferred:** considered a 4th mart 
+(`volume_to_marketcap_ratio`, a liquidity signal) but decided to hold off 
+until after building Airflow orchestration — current data is a single 
+point-in-time snapshot, and seeing how orchestration accumulates data over 
+time may change what additional marts are actually worth building.
+
+### Airflow Setup (Docker Compose, LocalExecutor)
+- Set up Airflow via Docker Compose rather than standalone mode, to match 
+  production-style deployment and reuse Docker skills from Phase 0.
+- Modified the official Airflow docker-compose.yaml: switched 
+  AIRFLOW__CORE__EXECUTOR from CeleryExecutor to LocalExecutor, removed 
+  Redis, airflow-worker, and Flower services (unnecessary for a 
+  single-developer setup, since they exist for distributed/multi-worker 
+  execution). Kept Postgres as the metadata database.
+- Generated a FERNET_KEY for encrypting connection secrets, added to .env 
+  alongside AIRFLOW_UID.
+- Ran `docker compose up airflow-init` (one-time DB init + admin user 
+  creation), then `docker compose up -d` to start all services.
+- Confirmed all 5 services (postgres, apiserver, scheduler, dag-processor, 
+  triggerer) running and healthy via `docker compose ps`. Logged into 
+  Airflow UI successfully.

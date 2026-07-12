@@ -158,11 +158,54 @@ Transformed the Bronze table into a cleaned, explicitly typed Silver table using
 
 Transformation logic: `transform_silver.py`
 
+### Phase 4: dbt Project Setup — ✅ Complete
+
+Initialized a dbt project to move from ad-hoc PySpark cleaning into version-controlled, testable, dependency-aware transformations — connected to Databricks via Unity Catalog.
+
+**1. Project Initialization**
+- Ran `dbt init`, selected the `databricks` adapter and Unity Catalog authentication
+- Catalog: `cg_crypto_data` (shared with the rest of the pipeline)
+- Schema: `dbt_dev` — kept intentionally separate from `bronze`/`silver` to distinguish hand-built PySpark tables from dbt-managed models
+- Connected using a Databricks personal access token and the project's Serverless SQL Warehouse HTTP path
+- Removed dbt's auto-generated example models and cleaned up the resulting unused config reference in `dbt_project.yml`
+
+**2. Source Definition**
+Declared `cg_crypto_data.silver.market_data` as a formal dbt **source** (`models/staging/sources.yml`), rather than hardcoding the table path in every model — keeps a single point of change if the Silver table ever moves.
+
+**3. Staging Model**
+Built `stg_crypto.sql` — a thin, 1:1 pass-through of the Silver table with explicit column selection (deliberately avoiding `select *`, so any future upstream schema drift surfaces as a visible error rather than silently changing downstream models).
+
+**4. Automated Testing**
+Added `schema.yml` with tests that formalize the manual validation checks performed earlier by hand:
+- `unique` + `not_null` on `id`
+- `not_null` on `current_price`, `market_cap`
+
+```bash
+dbt run    # builds stg_crypto as a view
+dbt test   # 4/4 tests passing
+```
+
+dbt project logic: `coingecko_dbt/models/staging/`
+
+### Phase 5: Gold Layer — Analytical Marts — ✅ Complete
+
+Built business-facing analytical tables on top of `stg_crypto`, each answering a distinct question rather than just re-exposing cleaned data.
+
+| Mart | Answers | Key logic |
+|---|---|---|
+| `top_gainers_losers` | Which coins moved most in the last 24h? | `movement_direction` label derived from `market_cap_change_percentage_24h` |
+| `market_cap_leaderboard` | Who are the biggest coins by market dominance? | `pct_supply_circulating`, guarded against divide-by-zero for uncapped coins via `nullif` |
+| `ath_atl_summary` | How far is each coin from its historical peak/trough? | `days_since_ath`/`days_since_atl` via `datediff` — made possible by the timestamp casting done in Silver |
+
+All three are materialized as **tables** (`{{ config(materialized='table') }}`) rather than views, since Gold output is meant to be pre-computed for repeated downstream querying, unlike staging's lighter view materialization. Each model references `stg_crypto` via `{{ ref(...) }}` rather than a hardcoded table path, so dbt can track dependencies and build order automatically.
+
+**Known limitation:** the current dataset is a single point-in-time snapshot, so these marts reflect a single moment rather than trends over time. Time-series analysis (e.g. rank changes over 30 days) would require the pipeline to run repeatedly and accumulate history — which is what Phase 6 (Airflow) enables. A fourth mart (`volume_to_marketcap_ratio`, a liquidity signal) was considered and deliberately deferred until after orchestration is in place, to decide with better information on what's actually worth building on top of accumulated data.
+
+Gold layer logic: `coingecko_dbt/models/marts/`
+
 ## Next Steps
 
-- **Phase 4: dbt Project Setup** — configure the `dbt-databricks` adapter, build staging models on top of Silver, and add automated schema/data tests (`not_null`, `unique`, `accepted_range`)
-- **Phase 5: Gold Layer** — build analytical marts (e.g. top gainers/losers, market cap leaderboard, ATH/ATL summary)
-- **Phase 6: Orchestration** — automate the full pipeline end-to-end with Apache Airflow
+- **Phase 6: Orchestration** — automate the full pipeline end-to-end with Apache Airflow (`extract → upload_to_s3 → ingest_bronze → transform_silver → dbt_run → dbt_test`), enabling scheduled, unattended runs and, eventually, historical data accumulation
 
 ---
 
