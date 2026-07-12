@@ -92,3 +92,44 @@ time may change what additional marts are actually worth building.
 - Confirmed all 5 services (postgres, apiserver, scheduler, dag-processor, 
   triggerer) running and healthy via `docker compose ps`. Logged into 
   Airflow UI successfully.
+
+
+  Attempted to install apache-airflow-providers-databricks locally for 
+Pylance support, but it conflicts with dbt-databricks's 
+databricks-sql-connector version requirement. Left the import 
+unresolved locally (Pylance warning only, cosmetic) — the package is 
+correctly installed inside the Airflow Docker container via the custom 
+Dockerfile, which is the only environment where this code actually runs.
+
+
+
+### Airflow DAG: Bronze → Silver Orchestration
+- Wrapped `ingest_bronze` and `transform_silver` Databricks notebooks as 
+  Databricks Jobs, giving each a stable Job ID that Airflow can trigger 
+  via API.
+- Extended the Airflow Docker image with a custom Dockerfile 
+  (`FROM apache/airflow:3.2.2` + `apache-airflow-providers-databricks`), 
+  since the Databricks operators aren't part of core Airflow.
+- Wrote `coingecko_etl_pipeline.py`, using `DatabricksRunNowOperator` for 
+  both tasks, with `ingest_bronze >> transform_silver` enforcing that 
+  Silver never runs on top of a failed or missing Bronze run.
+
+**Issues hit:**
+- DAG failed to load: `ModuleNotFoundError: No module named 'transformation'` 
+  — a stray import line that didn't belong in the file, unrelated to any 
+  actual dependency. Removed it.
+- `AirflowNotFoundException: conn_id 'databricks_default' isn't defined` — 
+  connection had been saved as `default_databricks` (words reversed). 
+  Recreated with the correct ID.
+- `403: Provided access token does not have required scopes: jobs` — 
+  original token was scoped too narrowly. Generated a new token with 
+  explicit `jobs` scope (auto-scoping turned off, so scope won't silently 
+  narrow again), 30-day lifetime.
+- First full run: `ingest_bronze` took ~11 minutes due to Serverless 
+  compute cold start on a free trial workspace — Airflow's progress 
+  indicator looked stuck but was correctly polling; confirmed actual 
+  progress directly in Databricks' own Job Runs tab rather than relying 
+  on Airflow's UI alone.
+
+**Result:** full DAG run succeeded — `ingest_bronze` → `transform_silver`, 
+triggered and sequenced entirely by Airflow, no manual notebook execution.
