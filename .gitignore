@@ -218,3 +218,29 @@ __marimo__/
 .streamlit/secrets.toml
 
 notes.md
+----------------------------------------
+
+
+# Environment & secrets
+.env
+*.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Jupyter/notebooks (if you ever export any locally)
+.ipynb_checkpoints/
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
