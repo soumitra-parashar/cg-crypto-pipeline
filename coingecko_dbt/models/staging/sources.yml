@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: silver
+    database: cg_crypto_data
+    schema: silver
+    tables:
+      - name: market_data
+        description: "Cleaned, typed cryptocurrency market data from the Silver layer."

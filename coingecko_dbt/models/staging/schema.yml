@@ -1,0 +1,16 @@
+version: 2
+models:
+  - name: stg_crypto
+    description: "Staging model - thin pass-through of the Silver layer crypto market data."
+    columns:
+      - name: id
+        description: "Unique coin identifier."
+        tests:
+          - unique
+          - not_null
+      - name: current_price
+        tests:
+          - not_null
+      - name: market_cap
+        tests:
+          - not_null
