@@ -12,3 +12,4 @@ standalone_admin_password.txtairflow.cfg
 .env
 logs/
 plugins/
+dbt_profile/

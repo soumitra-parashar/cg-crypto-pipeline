@@ -133,3 +133,23 @@ Dockerfile, which is the only environment where this code actually runs.
 
 **Result:** full DAG run succeeded — `ingest_bronze` → `transform_silver`, 
 triggered and sequenced entirely by Airflow, no manual notebook execution.
+
+
+
+### DAG Extended: Full Pipeline (Bronze → Silver → dbt run → dbt test)
+- Mounted `coingecko_dbt/` and a container-local copy of `profiles.yml` 
+  into the Airflow containers, enabling `dbt` commands to run inside 
+  Airflow via BashOperator (using DBT_PROFILES_DIR to point at the 
+  mounted profile).
+- Extended Dockerfile to install dbt-databricks inside the Airflow image.
+
+**Issue hit:** installing `apache-airflow-providers-databricks` and 
+`dbt-databricks` in the same pip install line caused pip's dependency 
+resolver to select an incompatible provider version, breaking DAG import 
+with `ImportError: cannot import name 'clear_task_instances'`. Fixed by 
+pinning the provider version explicitly and splitting the installs into 
+separate Dockerfile RUN layers, so each resolves independently.
+
+**Result:** full 4-task DAG (`ingest_bronze → transform_silver → dbt_run 
+→ dbt_test`) runs successfully end-to-end, ~4 minutes total. Confirmed 
+across [N] consecutive runs. Schedule set to daily.

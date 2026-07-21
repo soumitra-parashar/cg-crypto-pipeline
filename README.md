@@ -71,14 +71,14 @@ Databricks (PySpark) ── via Unity Catalog External Location
 
 ## Progress Log
 
-### Phase 0: Extraction & Upload — ✅ Complete
+### Phase 0: Extraction & Upload —  Complete
 
 - Set up project environments and tooling.
 - Wrote `extract.py` using `requests` to pull live market data from the CoinGecko API.
 - Wrote `upload_to_aws.py` using `boto3` and `python-dotenv` to securely upload the extracted raw JSON to AWS S3, keeping credentials out of source code via environment variables.
 - Wrapped `extract.py` in a Docker image (`python:3.12.1-slim` base) for consistent, portable execution.
 
-### Phase 1: Cloud Infrastructure & Security Setup — ✅ Complete
+### Phase 1: Cloud Infrastructure & Security Setup —  Complete
 
 Instead of hardcoding access keys — a security risk — a secure, role-based trust relationship was configured between Databricks and AWS using Unity Catalog.
 
@@ -99,7 +99,7 @@ Established a secure connection between AWS and Databricks without exposing long
 - Created an External Location in Databricks to bridge the S3 bucket to Unity Catalog
 - Verified the connection — all permission checks passed (read, write, list, delete, path exists, assume role, external ID condition)
 
-### Phase 2: Bronze Layer Ingestion (Raw Data) — ✅ Complete
+### Phase 2: Bronze Layer Ingestion (Raw Data) —  Complete
 
 Successfully moved data from cloud storage into the distributed compute engine, handling format inconsistencies along the way.
 
@@ -130,7 +130,7 @@ raw_df.write \
 **3. Sanity Check / Validation**
 Queried the new Bronze Delta table using the PySpark DataFrame API, checking schema, row counts, nulls, duplicates, and value ranges.
 
-### Data Validation — ✅ Complete
+### Data Validation —  Complete
 
 Validated the Bronze layer (`cg_crypto_data.bronze.market_data`, 50 rows) across five standard data quality dimensions — completeness, uniqueness, validity, consistency, and accuracy — using **both SQL and PySpark DataFrame API independently**, to cross-confirm findings and demonstrate equivalent fluency in both approaches.
 
@@ -140,7 +140,7 @@ Validated the Bronze layer (`cg_crypto_data.bronze.market_data`, 50 rows) across
 
 Validation logic: `validation.sql`, `sparkvalidation.py`
 
-### Phase 3: Silver Layer — Cleaning & Standardization — ✅ Complete
+### Phase 3: Silver Layer — Cleaning & Standardization —  Complete
 
 Transformed the Bronze table into a cleaned, explicitly typed Silver table using PySpark.
 
@@ -158,7 +158,7 @@ Transformed the Bronze table into a cleaned, explicitly typed Silver table using
 
 Transformation logic: `transform_silver.py`
 
-### Phase 4: dbt Project Setup — ✅ Complete
+### Phase 4: dbt Project Setup —  Complete
 
 Initialized a dbt project to move from ad-hoc PySpark cleaning into version-controlled, testable, dependency-aware transformations — connected to Databricks via Unity Catalog.
 
@@ -187,7 +187,7 @@ dbt test   # 4/4 tests passing
 
 dbt project logic: `coingecko_dbt/models/staging/`
 
-### Phase 5: Gold Layer — Analytical Marts — ✅ Complete
+### Phase 5: Gold Layer — Analytical Marts —  Complete
 
 Built business-facing analytical tables on top of `stg_crypto`, each answering a distinct question rather than just re-exposing cleaned data.
 
@@ -203,10 +203,87 @@ All three are materialized as **tables** (`{{ config(materialized='table') }}`) 
 
 Gold layer logic: `coingecko_dbt/models/marts/`
 
-## Next Steps
+### Phase 6: Orchestration (Apache Airflow) —  Complete
 
-- **Phase 6: Orchestration** — automate the full pipeline end-to-end with Apache Airflow (`extract → upload_to_s3 → ingest_bronze → transform_silver → dbt_run → dbt_test`), enabling scheduled, unattended runs and, eventually, historical data accumulation
+Setting up automated, unattended orchestration of the pipeline using Apache Airflow, run via Docker Compose.
+
+**1. Airflow Infrastructure**
+- Deployed via Docker Compose rather than standalone mode, to match production-style deployment and reuse containerization skills from Phase 0
+- Modified the official Airflow Compose file: switched from `CeleryExecutor` to `LocalExecutor`, removing Redis, `airflow-worker`, and Flower — unnecessary distributed-execution components for a single-developer setup. Kept Postgres as the metadata database.
+- Generated a `FERNET_KEY` for encrypting stored connection secrets
+- Extended the base Airflow image with a custom `Dockerfile` to install `apache-airflow-providers-databricks`, since Databricks operators aren't part of core Airflow
+
+**2. Databricks Job Wrapping**
+- Wrapped the Bronze ingestion and Silver transformation notebooks as Databricks Jobs (Workflows → Create Job), giving each a stable Job ID that Airflow can trigger via the Databricks REST API
+- Configured an Airflow Connection (`databricks_default`) authenticating via a scoped personal access token (`jobs` scope only, 30-day lifetime, auto-scoping disabled to keep permissions stable)
+
+**3. DAG: Bronze → Silver Orchestration**
+```python
+ingest_bronze = DatabricksRunNowOperator(
+    task_id="ingest_bronze",
+    databricks_conn_id="databricks_default",
+    job_id="<bronze_job_id>",
+)
+
+transform_silver = DatabricksRunNowOperator(
+    task_id="transform_silver",
+    databricks_conn_id="databricks_default",
+    job_id="<silver_job_id>",
+)
+
+ingest_bronze >> transform_silver
+```
+The `>>` dependency ensures Silver never runs on top of a missing or failed Bronze run — verified in practice when a connection misconfiguration caused `ingest_bronze` to fail, and `transform_silver` correctly refused to start rather than running on stale data.
+
+**Issues resolved along the way:**
+- A stray, unrelated import line broke DAG parsing entirely — traced and removed
+- Airflow connection was initially saved with a reversed ID (`default_databricks` instead of `databricks_default`), causing a "connection not defined" error at runtime
+- Initial access token was scoped too narrowly, causing a `403: missing required scopes: jobs` error — resolved by generating a token with explicit `jobs` scope
+- First successful run took ~11 minutes due to Serverless compute cold start on a free-tier workspace; confirmed actual progress via Databricks' own Job Runs tab rather than relying on Airflow's UI alone
+
+**Result:** first full DAG run succeeded end-to-end — Bronze ingestion and Silver transformation both triggered, sequenced, and completed by Airflow with no manual notebook execution.
+
+**4. Extending the DAG: Adding dbt**
+
+Extended the pipeline with two additional tasks running dbt directly inside the Airflow container via `BashOperator`:
+
+```python
+dbt_run = BashOperator(
+    task_id="dbt_run",
+    bash_command="cd /opt/airflow/coingecko_dbt && DBT_PROFILES_DIR=/opt/airflow/.dbt dbt run",
+)
+
+dbt_test = BashOperator(
+    task_id="dbt_test",
+    bash_command="cd /opt/airflow/coingecko_dbt && DBT_PROFILES_DIR=/opt/airflow/.dbt dbt test",
+)
+
+ingest_bronze >> transform_silver >> dbt_run >> dbt_test
+```
+
+Unlike Bronze/Silver (which require Databricks compute and are triggered via API), dbt only makes lightweight calls to the SQL Warehouse — so `dbt run`/`dbt test` run directly inside the Airflow container itself. This required mounting the `coingecko_dbt/` project and a container-local copy of `profiles.yml` into the Airflow containers, and extending the Airflow image with `dbt-databricks`.
+
+**Issue hit:** installing `apache-airflow-providers-databricks` and `dbt-databricks` in the same `pip install` command caused pip's dependency resolver to select an incompatible provider version, breaking DAG import with `ImportError: cannot import name 'clear_task_instances'`. Fixed by pinning the Databricks provider version explicitly and splitting the installs into separate Dockerfile `RUN` layers, so each resolves independently rather than jointly.
+
+**5. Final Validation & Scheduling**
+
+- Ran the complete 4-task DAG (`ingest_bronze → transform_silver → dbt_run → dbt_test`) multiple times to confirm reliability, not just a single successful run — execution time dropped from ~11 minutes (cold start) to ~4 minutes on warm runs
+- Set the DAG schedule to `@daily` (`0 0 * * *`), completing the transition from manually-triggered to fully orchestrated
+
+**Note on scheduling:** the DAG is configured to run daily, but Airflow only executes on schedule while its containers are actively running. Since this project runs in a local Docker Compose setup rather than a persistently deployed environment, the daily schedule is included to demonstrate orchestration capability rather than to run continuously unattended. In a production deployment, this same DAG would run automatically with no additional changes.
 
 ---
 
-*This README will be updated as each phase of the project progresses.*
+## Project Status: Complete 
+
+All six phases are built, tested, and orchestrated end-to-end:
+
+**Extract (Python) → S3 (raw landing zone) → Bronze (PySpark/Delta) → Silver (PySpark, cleaned & typed) → dbt (staging + Gold marts, tested) → Airflow (orchestration, scheduled)**
+
+**Possible future extensions** (not required for the current scope, noted for context):
+- A fourth Gold mart (`volume_to_marketcap_ratio`) — deferred pending accumulated historical data from repeated pipeline runs
+- Deploying Airflow to a persistent environment so the daily schedule runs unattended rather than on-demand
+
+---
+
+*Built as a data engineering portfolio project. Full development history, debugging notes, and decision rationale are documented in `docs/dev_log.md`.*

@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.providers.databricks.operators.databricks import DatabricksRunNowOperator
+from airflow.providers.standard.operators.bash import BashOperator
 from datetime import datetime
 
 default_args = {
@@ -11,7 +12,7 @@ with DAG(
     dag_id="coingecko_etl_pipeline",
     default_args=default_args,
     description="Orchestrates Bronze ingestion and Silver transformation on Databricks",
-    schedule=None,
+    schedule="@daily",
     start_date=datetime(2026, 7, 1),
     catchup=False,
     tags=["coingecko", "etl"],
@@ -29,7 +30,19 @@ with DAG(
         job_id="783176890600322"
     )
 
-    ingest_bronze >> transform_silver
+
+    dbt_run = BashOperator(
+        task_id="dbt_run",
+        bash_command="cd /opt/airflow/coingecko_dbt && DBT_PROFILES_DIR=/opt/airflow/.dbt dbt run",
+    )
+
+
+    dbt_test = BashOperator(
+        task_id="dbt_test",
+        bash_command="cd /opt/airflow/coingecko_dbt && DBT_PROFILES_DIR=/opt/airflow/.dbt dbt test",
+    )
+
+    ingest_bronze >> transform_silver >> dbt_run >> dbt_test
 
 
 
