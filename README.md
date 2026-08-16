@@ -46,7 +46,7 @@ The pipeline follows the **medallion architecture** (Bronze &rarr; Silver &rarr;
 |`staging`| `stg_crypto`  | Thin, 1:1 dbt layer on top of silver layer, dbt's convention for a consistent model starting point, no additional cleaning done in this.
 |`gold` | `top_gainers_losers`, `market_cap_leaderboard`,`ath_atl_summary`| Business-level analytical marts (dbt)|
 
-...
+```
 
 CoinGecko API
     ↓
@@ -62,10 +62,11 @@ cg_crypto_data.bronze.market_data
     ↓
 cg_crypto_data.silver.market_data
     ↓
-dbt (staging model &rarr; Gold marts, tested)
+dbt (staging model → Gold marts, tested)
     ↓
 Apache Airflow (orchestrates all steps)
-
+```
+...
 
 ## Progress Log
 
