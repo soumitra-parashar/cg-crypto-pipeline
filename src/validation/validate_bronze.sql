@@ -1,13 +1,11 @@
--- 1. Volume sanity check — does row count match expectations?
+-- 1. ROW count check 
 
       SELECT COUNT(*) AS row_count
       FROM cg_crypto_data.bronze.market_data;
       -- 50 rows. So correct.
 
 
--- 2. Completeness — is anything missing that shouldn't be?
-
--- Why: A null in id or current_price means that row is unusable downstream — no analysis can be built on a coin with no price.
+-- 2. Completeness
 
     SELECT
       COUNT(*) AS total_rows,
@@ -25,8 +23,8 @@ FROM cg_crypto_data.bronze.market_data;
 
 --max_supply has 26 nulls. But they can legitimately be nulls because some coins have no supply cap, didnt flag them as errors.
 
--- 3. Uniqueness — is each coin represented exactly once?
--- If id repeats, any aggregation (sum of market caps, rankings, etc.) will double-count that coin and silently corrupt every downstream number.
+-- 3. Uniqueness
+
 
       SELECT id, COUNT(*) AS occurrences
       FROM cg_crypto_data.bronze.market_data
@@ -42,9 +40,8 @@ FROM cg_crypto_data.bronze.market_data;
 
 -- Result- No rows returned so no dupes.
 
--- 4. Validity — does the data conform to expected types/ranges?
+-- 4. Validity
 
--- validating that prices, market, supply and date figures are not in negative.
 
       SELECT id, current_price, market_cap, circulating_supply, total_supply, max_supply
       FROM cg_crypto_data.bronze.market_data
@@ -72,7 +69,7 @@ FROM cg_crypto_data.bronze.market_data;
 |tether-gold|4148.52|4150.06|4182.61|
 |pax-gold|4151.58|4152.72|4188.82|
 
--- The real reason is almost certainly timing/snapshot lag: current_price is captured at the exact moment the API call runs, while high_24h/low_24h are computed by CoinGecko over a rolling 24-hour window that gets recalculated on its own cycle. If the price ticked down slightly after CoinGecko last recalculated the 24h low, you'll see current_price dip marginally below low_24h — which is what's happening here (4148.52 vs 4150.06, off by about 0.04%). It's a real, known quirk of near-real-time market data APIs, not a broken row.
+-- The real reason is almost certainly timing/snapshot lag: current_price is captured at the exact moment the API call runs, while high_24h/low_24h are computed by CoinGecko over a rolling 24-hour window that gets recalculated on its own cycle.
 
 -- ATH should be >= current price (you can't be above your own all-time high)
 
@@ -98,10 +95,9 @@ FROM cg_crypto_data.bronze.market_data;
 
 -- No rows returned
 
--- 6. Accuracy of derived fields — do percentage fields match their sign logic?
--- ath_change_percentage should almost always be ≤ 0 (you're below your all-time high),
+-- 6. Accuracy of derived fields 
+-- ath_change_percentage should almost always be ≤ 0 
 -- and atl_change_percentage should almost always be ≥ 0. 
--- A flipped sign usually means a formula or join went wrong somewhere upstream.
 
       SELECT id, ath_change_percentage, atl_change_percentage
       FROM cg_crypto_data.bronze.market_data

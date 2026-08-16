@@ -3,17 +3,15 @@ from pyspark.sql.functions import col, count, to_timestamp
 # Load the Bronze table
 df = spark.table("cg_crypto_data.bronze.market_data")
 
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 # 0. Row count sanity check
-# Why: fastest signal something upstream changed (API, overwrite, filter)
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 print("Row count:", df.count())  # expect 50
 
 
-# ─────────────────────────────────────────────
-# 1. Completeness — critical fields must never be null
-# Why: a null id/price/market_cap makes that row unusable downstream
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
+# 1. Completeness 
+#──────────────────────────────────────────────────────────────────────────────────────────
 df.select(
     (df.count() - count(col("id"))).alias("null_id"),
     (df.count() - count(col("current_price"))).alias("null_price"),
@@ -25,18 +23,16 @@ df.select(
 print("Null max_supply count:", df.filter(col("max_supply").isNull()).count())
 
 
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 # 2. Uniqueness — id and market_cap_rank should each appear once
-# Why: duplicates silently corrupt any aggregation or ranking downstream
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 df.groupBy("id").count().filter(col("count") > 1).show()
 df.groupBy("market_cap_rank").count().filter(col("count") > 1).show()
 
 
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 # 3. Validity — no negative prices/market caps/supply; dates must parse
-# Why: negative values or unparseable dates signal an upstream API/parsing bug
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 df.filter(
     (col("current_price") < 0) |
     (col("market_cap") < 0) |
@@ -50,10 +46,10 @@ df.filter(
 ).select("id", "ath_date", "atl_date", "last_updated").show()
 
 
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 # 4. Consistency — related fields should logically agree
 # Why: catches real bugs, not just missing data
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 
 # current_price should sit within the 24h range
 df.filter(
@@ -75,10 +71,9 @@ df.filter(
 ).select("id", "circulating_supply", "max_supply").show()
 
 
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 # 5. Accuracy of derived fields — percentage sign logic
-# Why: a flipped sign usually means a formula/join error upstream
-# ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────────────────
 df.filter(
     (col("ath_change_percentage") > 0) |
     (col("atl_change_percentage") < 0)

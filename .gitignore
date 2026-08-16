@@ -1,9 +1,6 @@
-# Environment & secrets
 .env
 *.env
 .env.*
-
-# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -11,13 +8,8 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
-
-# Jupyter/notebooks
 .ipynb_checkpoints/
-
-# OS clutter
 .DS_Store
 Thumbs.db
-
-# Logs
 *.log
+target/

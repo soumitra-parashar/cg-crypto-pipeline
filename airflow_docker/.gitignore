@@ -1,14 +1,10 @@
-# Secrets - contains FERNET_KEY and AIRFLOW_UID
 .env
-
-# Airflow runtime data - regenerated on every startup, not meant to be versioned
 logs/
 plugins/
-
-# Airflow's own local config/state if generated
 airflow.cfg
 airflow.db
-standalone_admin_password.txtairflow.cfg
+standalone_admin_password.txt
+airflow.cfg
 .env
 logs/
 plugins/
